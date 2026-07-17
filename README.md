@@ -47,7 +47,7 @@ uv run beewi-tray
 ```
 
 Click the tray icon to expand a panel with per-light on/off, a live color
-picker, brightness and warmth sliders, a toggle to control both lights together,
+picker, brightness and warmth sliders, a toggle to control all lights together,
 and saveable presets. It keeps a Bluetooth connection open to each bulb so
 sliders respond in real time.
 

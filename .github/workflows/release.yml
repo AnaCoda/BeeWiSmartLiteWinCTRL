@@ -1,0 +1,37 @@
+name: Build Windows exe
+
+# Builds the tray app into a single .exe. Runs when you publish a GitHub Release
+# (attaches the exe to it), and on manual runs (downloadable as an artifact).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # allows attaching the exe to the release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build exe
+        run: uv run --with pyinstaller pyinstaller --onefile --windowed --name BeeWiLightsController run_tray.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BeeWiLightsController
+          path: dist/BeeWiLightsController.exe
+
+      - name: Attach exe to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/BeeWiLightsController.exe
