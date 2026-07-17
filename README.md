@@ -40,12 +40,13 @@ Nothing found? Try `uv run beewi scan --all` to list every BLE device.
 
 ## Tray app
 
-A system-tray control panel (run `beewi scan` once first to save your bulbs):
+A system-tray control panel:
 
 ```powershell
 uv run beewi-tray
 ```
 
+On first run it scans for your bulbs automatically (or click "Scan" any time).
 Click the tray icon to expand a panel with per-light on/off, a live color
 picker, brightness and warmth sliders, a toggle to control all lights together,
 and saveable presets. It keeps a Bluetooth connection open to each bulb so

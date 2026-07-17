@@ -142,3 +142,38 @@ class Engine:
     def is_connected(self, address: str) -> bool:
         bulb = self._bulbs.get(address)
         return bool(bulb and bulb.connected)
+
+    def add_bulbs(self, addresses: List[str]) -> None:
+        """Start managing more bulbs at runtime (e.g. after an in-app scan)."""
+        if self._loop is None:
+            return
+
+        def _add() -> None:
+            for addr in addresses:
+                if addr not in self._bulbs:
+                    bulb = _Bulb(addr)
+                    self._bulbs[addr] = bulb
+                    self._loop.create_task(self._worker(bulb))
+
+        self._loop.call_soon_threadsafe(_add)
+
+    def scan(self, callback, timeout: float = 8.0) -> None:
+        """Discover bulbs on the BLE loop; call callback([(address, name), ...]).
+
+        The callback runs on the loop thread, so a GUI caller should marshal it
+        back to its own thread (e.g. by emitting a Qt signal).
+        """
+        if self._loop is None:
+            callback([])
+            return
+
+        async def _do() -> None:
+            from .device import scan as ble_scan
+            try:
+                devices = await ble_scan(timeout=timeout)
+                results = [(d.address, d.name or d.address) for d in devices]
+            except Exception:
+                results = []
+            callback(results)
+
+        asyncio.run_coroutine_threadsafe(_do(), self._loop)
