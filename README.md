@@ -38,6 +38,19 @@ Choose which bulbs to save explicitly with
 
 Nothing found? Try `uv run beewi scan --all` to list every BLE device.
 
+## Tray app
+
+A system-tray control panel (run `beewi scan` once first to save your bulbs):
+
+```powershell
+uv run beewi-tray
+```
+
+Click the tray icon to expand a panel with per-light on/off, a live color
+picker, brightness and warmth sliders, a toggle to control both lights together,
+and saveable presets. It keeps a Bluetooth connection open to each bulb so
+sliders respond in real time.
+
 ## Credits
 
 The BeeWi SmartLite Bluetooth protocol (characteristic UUIDs and command bytes)

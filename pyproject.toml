@@ -6,10 +6,12 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "bleak>=0.21",
+    "pyside6>=6.6",
 ]
 
 [project.scripts]
 beewi = "beewi.cli:main"
+beewi-tray = "beewi.tray:main"
 
 [build-system]
 requires = ["hatchling"]
