@@ -1,8 +1,9 @@
 """System-tray control panel for the BeeWi bulbs.
 
-Click the tray icon to expand a panel with per-light on/off, brightness, warmth,
-and a live color picker, a toggle to control both lights together, and presets.
-All BLE work goes through the persistent-connection Engine so dragging is smooth.
+A frameless, rounded flyout (no OS title bar, no taskbar entry) with per-light
+on/off, an inline color picker (hue slider + swatches), brightness and warmth
+sliders, a toggle to control both lights together, and presets. All BLE work
+goes through the persistent-connection Engine so dragging stays smooth.
 """
 
 from __future__ import annotations
@@ -14,16 +15,17 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
-    QColorDialog,
     QComboBox,
+    QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -35,13 +37,101 @@ from .engine import Engine
 
 LEVEL_MAX = 9
 
+SWATCHES = [
+    (244, 67, 54), (255, 152, 0), (255, 214, 90), (76, 175, 80),
+    (0, 188, 212), (33, 150, 243), (123, 97, 255), (233, 30, 99),
+    (255, 255, 255),
+]
+
+STYLE = """
+#card { background: #ffffff; border-radius: 16px; }
+#panel { background: #f4f5f7; border-radius: 12px; }
+QLabel { color: #1c1d21; font-size: 13px; }
+#title { font-size: 14px; font-weight: 600; }
+#name { font-weight: 600; }
+#muted { color: #7a808a; font-size: 12px; }
+
+QPushButton {
+    background: #eceef1; color: #1c1d21; border: none;
+    border-radius: 9px; padding: 8px 12px; font-size: 13px;
+}
+QPushButton:hover { background: #e1e4e9; }
+#power:checked, #link:checked { background: #3b82f6; color: white; }
+#close { background: transparent; color: #7a808a; border-radius: 8px; font-size: 15px; }
+#close:hover { background: #e11d48; color: white; }
+#pbtn { padding: 6px 10px; }
+
+QComboBox, QLineEdit {
+    background: #eceef1; color: #1c1d21; border: none;
+    border-radius: 9px; padding: 7px 10px; font-size: 13px;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff; color: #1c1d21; border: 1px solid #e1e4e9;
+    selection-background-color: #3b82f6; selection-color: white; outline: none;
+}
+
+QSlider::groove:horizontal { height: 6px; background: #dfe2e7; border-radius: 3px; }
+QSlider::sub-page:horizontal { background: #3b82f6; border-radius: 3px; }
+QSlider::handle:horizontal {
+    width: 16px; height: 16px; margin: -6px 0; border-radius: 8px;
+    background: white; border: 1px solid #c4c9d0;
+}
+QSlider#hue::groove:horizontal {
+    height: 12px; border-radius: 6px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #ff0000, stop:0.17 #ffff00, stop:0.33 #00ff00,
+        stop:0.5 #00ffff, stop:0.67 #0000ff, stop:0.83 #ff00ff, stop:1 #ff0000);
+}
+QSlider#hue::sub-page:horizontal { background: transparent; }
+QSlider#hue::handle:horizontal {
+    width: 14px; height: 14px; margin: -3px 0; border-radius: 8px;
+    background: white; border: 2px solid #cfd3da;
+}
+
+QScrollBar:vertical { background: transparent; width: 8px; margin: 2px; }
+QScrollBar::handle:vertical { background: #c4c9d0; border-radius: 4px; min-height: 24px; }
+QScrollBar::handle:vertical:hover { background: #adb3bc; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+"""
+
 
 def _default_state() -> dict:
     return {"on": True, "mode": "color", "r": 255, "g": 255, "b": 255,
             "brightness": LEVEL_MAX, "warmth": 5}
 
 
-class LightPanel(QGroupBox):
+class _Header(QWidget):
+    """Draggable title bar with a close (hide) button."""
+
+    def __init__(self, title: str, on_close):
+        super().__init__()
+        self._drag = None
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(2, 0, 0, 0)
+        label = QLabel(title)
+        label.setObjectName("title")
+        close = QPushButton("✕")
+        close.setObjectName("close")
+        close.setFixedSize(30, 28)
+        close.clicked.connect(on_close)
+        lay.addWidget(label)
+        lay.addStretch(1)
+        lay.addWidget(close)
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.LeftButton:
+            self._drag = e.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+
+    def mouseMoveEvent(self, e) -> None:
+        if self._drag is not None and e.buttons() & Qt.LeftButton:
+            self.window().move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, e) -> None:
+        self._drag = None
+
+
+class LightPanel(QFrame):
     """Controls for one bulb. Emits high-level signals; the window routes them."""
 
     powerChanged = Signal(bool)
@@ -50,17 +140,28 @@ class LightPanel(QGroupBox):
     warmthChanged = Signal(int)
 
     def __init__(self, title: str):
-        super().__init__(title)
-        self._base_title = title
+        super().__init__()
+        self.setObjectName("panel")
         self._state = _default_state()
 
+        self._name = QLabel(title)
+        self._name.setObjectName("name")
+        self._status = QLabel("…")
+        self._status.setObjectName("muted")
+
         self._power = QPushButton("On")
+        self._power.setObjectName("power")
         self._power.setCheckable(True)
         self._power.setChecked(True)
         self._power.toggled.connect(self._on_power)
 
-        self._color_btn = QPushButton("Color")
-        self._color_btn.clicked.connect(self._pick_color)
+        self._preview = QLabel()
+        self._preview.setFixedSize(22, 22)
+
+        self._hue = QSlider(Qt.Horizontal)
+        self._hue.setObjectName("hue")
+        self._hue.setRange(0, 359)
+        self._hue.valueChanged.connect(self._on_hue)
 
         self._brightness = QSlider(Qt.Horizontal)
         self._brightness.setRange(0, LEVEL_MAX)
@@ -73,13 +174,41 @@ class LightPanel(QGroupBox):
         self._warmth.valueChanged.connect(self._on_warmth)
 
         grid = QGridLayout(self)
-        grid.addWidget(self._power, 0, 0)
-        grid.addWidget(self._color_btn, 0, 1)
-        grid.addWidget(QLabel("Brightness"), 1, 0)
-        grid.addWidget(self._brightness, 1, 1)
-        grid.addWidget(QLabel("Warmth"), 2, 0)
-        grid.addWidget(self._warmth, 2, 1)
-        self._refresh_color_btn()
+        grid.setContentsMargins(14, 12, 14, 12)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+
+        top = QHBoxLayout()
+        top.addWidget(self._name)
+        top.addWidget(self._status)
+        top.addStretch(1)
+        top.addWidget(self._preview)
+        grid.addLayout(top, 0, 0, 1, 2)
+
+        grid.addWidget(self._power, 1, 0, 1, 2)
+        grid.addLayout(self._build_swatches(), 2, 0, 1, 2)
+        grid.addWidget(self._hue, 3, 0, 1, 2)
+        grid.addWidget(QLabel("Brightness"), 4, 0)
+        grid.addWidget(self._brightness, 4, 1)
+        grid.addWidget(QLabel("Warmth"), 5, 0)
+        grid.addWidget(self._warmth, 5, 1)
+
+        self._paint_preview()
+
+    def _build_swatches(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for r, g, b in SWATCHES:
+            btn = QPushButton()
+            btn.setFixedSize(24, 24)
+            btn.setStyleSheet(
+                f"background: rgb({r},{g},{b}); border-radius: 12px;"
+                "border: 1px solid rgba(0,0,0,0.15);"
+            )
+            btn.clicked.connect(lambda _=False, c=(r, g, b): self._on_swatch(*c))
+            row.addWidget(btn)
+        row.addStretch(1)
+        return row
 
     # Widget events ------------------------------------------------------
 
@@ -89,33 +218,43 @@ class LightPanel(QGroupBox):
         self.powerChanged.emit(on)
 
     def _on_warmth(self, level: int) -> None:
-        self._state["mode"] = "white"
-        self._state["warmth"] = level
+        self._state.update(mode="white", warmth=level)
+        self._paint_preview()
         self.warmthChanged.emit(level)
 
-    def _pick_color(self) -> None:
-        dlg = QColorDialog(QColor(self._state["r"], self._state["g"], self._state["b"]), self)
-        # Qt's own dialog emits currentColorChanged live while dragging; the
-        # native Windows one does not, so force the Qt dialog.
-        dlg.setOption(QColorDialog.DontUseNativeDialog, True)
-        dlg.currentColorChanged.connect(self._on_color_live)
-        dlg.exec()
+    def _on_hue(self, hue: int) -> None:
+        c = QColor.fromHsv(hue, 255, 255)
+        self._set_color(c.red(), c.green(), c.blue(), move_hue=False)
+        self.colorChanged.emit(c.red(), c.green(), c.blue())
 
-    def _on_color_live(self, color: QColor) -> None:
-        if not color.isValid():
-            return
-        self._state.update(mode="color", r=color.red(), g=color.green(), b=color.blue())
-        self._refresh_color_btn()
-        self.colorChanged.emit(color.red(), color.green(), color.blue())
+    def _on_swatch(self, r: int, g: int, b: int) -> None:
+        self._set_color(r, g, b, move_hue=True)
+        self.colorChanged.emit(r, g, b)
 
-    def _refresh_color_btn(self) -> None:
+    def _set_color(self, r: int, g: int, b: int, move_hue: bool) -> None:
+        self._state.update(mode="color", r=r, g=g, b=b)
+        self._paint_preview()
+        if move_hue:
+            hue = QColor(r, g, b).hue()
+            if hue >= 0:
+                self._hue.blockSignals(True)
+                self._hue.setValue(hue)
+                self._hue.blockSignals(False)
+
+    def _warmth_color(self, level: int) -> tuple:
+        # Cool white (level 0) to warm amber (level 9), for the preview dot.
+        t = level / LEVEL_MAX
+        return (int(200 + 55 * t), int(220 - 50 * t), int(255 - 165 * t))
+
+    def _paint_preview(self) -> None:
         s = self._state
-        self._color_btn.setStyleSheet(
-            f"background-color: rgb({s['r']},{s['g']},{s['b']}); color: "
-            f"{'black' if (s['r']+s['g']+s['b']) > 384 else 'white'};"
+        r, g, b = self._warmth_color(s["warmth"]) if s["mode"] == "white" else (s["r"], s["g"], s["b"])
+        self._preview.setStyleSheet(
+            f"background: rgb({r},{g},{b}); border-radius: 11px;"
+            "border: 1px solid rgba(0,0,0,0.18);"
         )
 
-    # Silent setters (used for link-mirroring and presets; no signals) ----
+    # Silent setters (link-mirroring and presets; no signals) ------------
 
     def set_power_silent(self, on: bool) -> None:
         self._power.blockSignals(True)
@@ -135,10 +274,10 @@ class LightPanel(QGroupBox):
         self._warmth.setValue(level)
         self._warmth.blockSignals(False)
         self._state.update(mode="white", warmth=level)
+        self._paint_preview()
 
     def set_color_silent(self, r: int, g: int, b: int) -> None:
-        self._state.update(mode="color", r=r, g=g, b=b)
-        self._refresh_color_btn()
+        self._set_color(r, g, b, move_hue=True)
 
     def apply_state_silent(self, state: dict) -> None:
         self.set_power_silent(state.get("on", True))
@@ -152,11 +291,11 @@ class LightPanel(QGroupBox):
         return dict(self._state)
 
     def set_connected(self, connected: bool) -> None:
-        self.setTitle(f"{self._base_title}   {'●' if connected else '…'}")
+        self._status.setText("connected" if connected else "connecting…")
 
 
 class ControlWindow(QWidget):
-    """The expandable panel shown when the tray icon is clicked."""
+    """The frameless flyout shown when the tray icon is clicked."""
 
     def __init__(self, engine: Engine, addresses: List[str]):
         super().__init__()
@@ -164,15 +303,40 @@ class ControlWindow(QWidget):
         self._addresses = addresses
         self._panels: Dict[str, LightPanel] = {}
 
-        self.setWindowTitle("BeeWi Lights")
-        self.setWindowFlags(Qt.Tool)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet(STYLE)
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 18, 18, 18)  # room for the drop shadow
+        card = QFrame()
+        card.setObjectName("card")
+        card.setMinimumWidth(340)
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setXOffset(0)
+        shadow.setYOffset(8)
+        shadow.setColor(QColor(0, 0, 0, 70))
+        card.setGraphicsEffect(shadow)
+        outer.addWidget(card)
 
-        self._link = QPushButton("Control both lights together")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 14)
+        layout.setSpacing(10)
+
+        layout.addWidget(_Header("BeeWi Lights Controller", self.hide))
+
+        self._link = QPushButton("Control all lights together")
+        self._link.setObjectName("link")
         self._link.setCheckable(True)
         layout.addWidget(self._link)
 
+        # One panel per bulb, inside a scroll area so any number of lights fits.
+        panels_widget = QWidget()
+        panels_widget.setStyleSheet("background: transparent;")
+        panels_layout = QVBoxLayout(panels_widget)
+        panels_layout.setContentsMargins(0, 0, 0, 0)
+        panels_layout.setSpacing(10)
         for i, addr in enumerate(addresses):
             panel = LightPanel(f"Light {i + 1}")
             panel.powerChanged.connect(lambda on, a=addr: self._route_power(a, on))
@@ -180,11 +344,20 @@ class ControlWindow(QWidget):
             panel.brightnessChanged.connect(lambda lv, a=addr: self._route_brightness(a, lv))
             panel.warmthChanged.connect(lambda lv, a=addr: self._route_warmth(a, lv))
             self._panels[addr] = panel
-            layout.addWidget(panel)
+            panels_layout.addWidget(panel)
+        panels_layout.addStretch(1)
+
+        self._panels_widget = panels_widget
+        self._scroll = QScrollArea()
+        self._scroll.setWidget(panels_widget)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.viewport().setStyleSheet("background: transparent;")
+        layout.addWidget(self._scroll)
 
         layout.addLayout(self._build_presets_row())
 
-        # Keep the connection dots fresh.
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_status)
         self._timer.start(1000)
@@ -226,17 +399,25 @@ class ControlWindow(QWidget):
 
     def _build_presets_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
+        row.setSpacing(6)
         self._preset_box = QComboBox()
+        self._preset_name = QLineEdit()
+        self._preset_name.setPlaceholderText("name")
+        self._preset_name.setFixedWidth(72)
         self._reload_presets()
+
         apply_btn = QPushButton("Apply")
         save_btn = QPushButton("Save")
-        del_btn = QPushButton("Delete")
+        del_btn = QPushButton("✕")
+        for b in (apply_btn, save_btn, del_btn):
+            b.setObjectName("pbtn")
         apply_btn.clicked.connect(self._apply_preset)
         save_btn.clicked.connect(self._save_preset)
         del_btn.clicked.connect(self._delete_preset)
-        row.addWidget(QLabel("Preset"))
+
         row.addWidget(self._preset_box, 1)
         row.addWidget(apply_btn)
+        row.addWidget(self._preset_name)
         row.addWidget(save_btn)
         row.addWidget(del_btn)
         return row
@@ -246,14 +427,15 @@ class ControlWindow(QWidget):
         self._preset_box.addItems(sorted(config.load_presets().keys()))
 
     def _save_preset(self) -> None:
-        name, ok = QInputDialog.getText(self, "Save preset", "Preset name:")
-        if not ok or not name.strip():
+        name = self._preset_name.text().strip()
+        if not name:
             return
         presets = config.load_presets()
-        presets[name.strip()] = {a: p.get_state() for a, p in self._panels.items()}
+        presets[name] = {a: p.get_state() for a, p in self._panels.items()}
         config.save_presets(presets)
+        self._preset_name.clear()
         self._reload_presets()
-        self._preset_box.setCurrentText(name.strip())
+        self._preset_box.setCurrentText(name)
 
     def _apply_preset(self) -> None:
         name = self._preset_box.currentText()
@@ -285,6 +467,12 @@ class ControlWindow(QWidget):
         for addr, panel in self._panels.items():
             panel.set_connected(self._engine.is_connected(addr))
 
+    def fit_to(self, max_scroll_height: int) -> None:
+        """Size the scroll area to the lights, capped so it never exceeds screen."""
+        self._panels_widget.ensurePolished()
+        needed = self._panels_widget.sizeHint().height()
+        self._scroll.setFixedHeight(min(needed, max_scroll_height) + 2)
+
     def closeEvent(self, event) -> None:  # hide to tray instead of quitting
         event.ignore()
         self.hide()
@@ -308,12 +496,12 @@ class TrayApp:
     def __init__(self, engine: Engine, addresses: List[str]):
         self._window = ControlWindow(engine, addresses)
         self._tray = QSystemTrayIcon(_make_icon())
-        self._tray.setToolTip("BeeWi Lights")
+        self._tray.setToolTip("BeeWi Lights Controller")
 
         menu = QMenu()
         show = QAction("Show controls", menu)
         quit_act = QAction("Quit", menu)
-        show.triggered.connect(self._toggle)
+        show.triggered.connect(self.show_window)
         quit_act.triggered.connect(QApplication.quit)
         menu.addAction(show)
         menu.addSeparator()
@@ -322,7 +510,7 @@ class TrayApp:
         self._tray.activated.connect(self._on_activated)
         self._tray.show()
         self._tray.showMessage(
-            "BeeWi Lights",
+            "BeeWi Lights Controller",
             "Running in the tray. Click the icon to open controls.",
             QSystemTrayIcon.MessageIcon.Information,
             4000,
@@ -339,8 +527,9 @@ class TrayApp:
             self.show_window()
 
     def show_window(self) -> None:
-        self._window.adjustSize()
         screen = QApplication.primaryScreen().availableGeometry()
+        self._window.fit_to(int(screen.height() * 0.72))
+        self._window.adjustSize()
         size = self._window.frameGeometry()
         self._window.move(
             screen.right() - size.width() - 12,
