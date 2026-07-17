@@ -6,22 +6,31 @@ from typing import List, Optional
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 
 from . import protocol
 
 _NAME_HINTS = ("smart lite", "smartlite", "beewi")
 
+# The bulbs advertise a serial number as their name (not "BeeWi"), so we match on
+# their manufacturer data instead: Texas Instruments (company 0x000D) with a
+# payload starting 0x06 0x03. Name hints stay as a fallback for other firmware.
+_TI_COMPANY_ID = 0x000D
+_MFR_SIGNATURE = b"\x06\x03"
+
 
 async def scan(timeout: float = 8.0, all_devices: bool = False) -> List[BLEDevice]:
     """Discover nearby BLE devices (likely BeeWi bulbs unless all_devices)."""
-    devices = await BleakScanner.discover(timeout=timeout)
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     if all_devices:
-        return devices
-    matches = [d for d in devices if _looks_like_bulb(d)]
-    return matches
+        return [dev for dev, _ in found.values()]
+    return [dev for dev, adv in found.values() if _looks_like_bulb(dev, adv)]
 
 
-def _looks_like_bulb(device: BLEDevice) -> bool:
+def _looks_like_bulb(device: BLEDevice, adv: AdvertisementData) -> bool:
+    payload = adv.manufacturer_data.get(_TI_COMPANY_ID)
+    if payload and payload.startswith(_MFR_SIGNATURE):
+        return True
     name = (device.name or "").lower()
     return any(hint in name for hint in _NAME_HINTS)
 
