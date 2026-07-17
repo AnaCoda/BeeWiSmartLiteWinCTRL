@@ -1,9 +1,9 @@
 """BeeWi SmartLite command frames. Each command is 0x55 <cmd> <args...> 0x0D 0x0A.
 
 Protocol (UUIDs + command bytes) reverse-engineered by others; credit to:
-- BeewiPy by delkk0 — https://github.com/delkk0/BeewiPy
-- light.beewi by bbo76 — https://github.com/bbo76/light.beewi
-- Raspberry Pi forum thread — https://forums.raspberrypi.com/viewtopic.php?t=117729
+- BeewiPy by delkk0: https://github.com/delkk0/BeewiPy
+- light.beewi by bbo76: https://github.com/bbo76/light.beewi
+- Raspberry Pi forum thread: https://forums.raspberrypi.com/viewtopic.php?t=117729
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
-# BeeWi SmartLite — Windows Control
+# BeeWi SmartLite Windows Control
 
-Control a BeeWi SmartLite RGB bulb from Windows over Bluetooth — no app, no cloud.
+Control a BeeWi SmartLite RGB bulb from Windows over Bluetooth: no app, no cloud.
 
 ## Setup
 
@@ -26,8 +26,15 @@ uv run beewi temp 3          # white warmth 0..9
 uv run beewi status
 ```
 
-`scan` saves the address, so later commands need nothing extra. If it finds
-several devices, save yours with `uv run beewi use AA:BB:CC:DD:EE:FF`.
+`scan` saves every bulb it finds, and each command applies to **all** saved
+bulbs at once. Target a single bulb with `--address`:
+
+```powershell
+uv run beewi --address 98:7B:F3:5A:70:38 on
+```
+
+Choose which bulbs to save explicitly with
+`uv run beewi use AA:BB:CC:DD:EE:FF 11:22:33:44:55:66`.
 
 Nothing found? Try `uv run beewi scan --all` to list every BLE device.
 

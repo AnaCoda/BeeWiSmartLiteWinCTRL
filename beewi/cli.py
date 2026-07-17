@@ -5,21 +5,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from typing import Optional
+from typing import List, Optional
 
 from . import config
 from .device import BeewiLight, scan
 
 
-def _resolve_address(explicit: Optional[str]) -> str:
-    address = explicit or config.load_address()
-    if not address:
+def _resolve_addresses(explicit: Optional[str]) -> List[str]:
+    addresses = [explicit] if explicit else config.load_addresses()
+    if not addresses:
         print(
-            "No bulb address. Run 'beewi scan' first, or pass --address <MAC>.",
+            "No bulbs saved. Run 'beewi scan' first, or pass --address <MAC>.",
             file=sys.stderr,
         )
         raise SystemExit(2)
-    return address
+    return addresses
 
 
 async def _run_scan(args: argparse.Namespace) -> int:
@@ -39,53 +39,64 @@ async def _run_scan(args: argparse.Namespace) -> int:
     for i, d in enumerate(devices):
         print(f"  [{i}] {d.address}  {d.name or '(no name)'}")
 
-    # Auto-save when there is exactly one obvious match.
-    if not args.all and len(devices) == 1:
-        path = config.save_address(devices[0].address)
-        print(f"\nSaved {devices[0].address} to {path}")
+    if args.all:
+        print("\nSave the ones you want with:  beewi use <MAC> [<MAC> ...]")
     else:
-        print(
-            "\nSave one with:  beewi use <MAC>\n"
-            "  e.g.  beewi use " + devices[0].address
-        )
+        path = config.save_addresses([d.address for d in devices])
+        print(f"\nSaved {len(devices)} bulb(s) to {path}")
     return 0
 
 
 async def _run_use(args: argparse.Namespace) -> int:
-    path = config.save_address(args.address)
-    print(f"Saved {args.address} to {path}")
+    path = config.save_addresses(args.addresses)
+    print(f"Saved {len(args.addresses)} bulb(s) to {path}")
     return 0
 
 
-async def _run_action(args: argparse.Namespace) -> int:
-    address = _resolve_address(args.address)
+async def _act(address: str, args: argparse.Namespace) -> str:
+    """Apply one command to a single bulb and return a result line."""
     async with BeewiLight(address) as light:
         if args.command == "on":
             await light.on()
-            print("on")
-        elif args.command == "off":
+            return "on"
+        if args.command == "off":
             await light.off()
-            print("off")
-        elif args.command == "color":
+            return "off"
+        if args.command == "color":
             await light.color(args.r, args.g, args.b)
-            print(f"color {args.r} {args.g} {args.b}")
-        elif args.command == "dim":
+            return f"color {args.r} {args.g} {args.b}"
+        if args.command == "dim":
             await light.brightness(args.level)
-            print(f"brightness {args.level}")
-        elif args.command == "temp":
+            return f"brightness {args.level}"
+        if args.command == "temp":
             await light.temperature(args.level)
-            print(f"temperature {args.level}")
-        elif args.command == "white":
+            return f"temperature {args.level}"
+        if args.command == "white":
             await light.white()
-            print("white")
-        elif args.command == "status":
+            return "white"
+        if args.command == "status":
             s = await light.status()
             state = "on" if s.on else "off"
-            print(
+            return (
                 f"power={state}  level/white={s.brightness_or_white}  "
                 f"rgb=({s.r},{s.g},{s.b})"
             )
-    return 0
+        raise ValueError(f"unknown command {args.command!r}")
+
+
+async def _run_action(args: argparse.Namespace) -> int:
+    addresses = _resolve_addresses(args.address)
+    results = await asyncio.gather(
+        *(_act(addr, args) for addr in addresses), return_exceptions=True
+    )
+    ok = True
+    for addr, result in zip(addresses, results):
+        if isinstance(result, Exception):
+            ok = False
+            print(f"{addr}  ERROR: {result}", file=sys.stderr)
+        else:
+            print(f"{addr}  {result}")
+    return 0 if ok else 1
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -94,11 +105,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--address",
-        help="Bulb BLE MAC address (overrides the saved one).",
+        help="Target only this bulb MAC (default: all saved bulbs).",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_scan = sub.add_parser("scan", help="Discover bulbs and save the address.")
+    p_scan = sub.add_parser("scan", help="Discover bulbs and save their addresses.")
     p_scan.add_argument(
         "--timeout", type=float, default=8.0, help="Scan duration in seconds."
     )
@@ -106,8 +117,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--all", action="store_true", help="List every BLE device, not just BeeWi."
     )
 
-    p_use = sub.add_parser("use", help="Save a specific bulb MAC as the target.")
-    p_use.add_argument("address", help="BLE MAC address to save.")
+    p_use = sub.add_parser("use", help="Save specific bulb MACs as the targets.")
+    p_use.add_argument("addresses", nargs="+", help="BLE MAC address(es) to save.")
 
     sub.add_parser("on", help="Turn the bulb on.")
     sub.add_parser("off", help="Turn the bulb off.")
