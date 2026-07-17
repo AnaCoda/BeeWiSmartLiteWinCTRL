@@ -1,6 +1,24 @@
 # BeeWi SmartLite Windows Control
 
 Control a BeeWi SmartLite RGB bulb from Windows over Bluetooth: no app, no cloud.
+Created since they deprecated the BeeWi Smarthome app and also OtioHome leaving the lights unsupported :(
+
+<img width="447" height="747" alt="image" src="https://github.com/user-attachments/assets/738afdef-b6c2-4e54-aa80-8ca3fd070602" />
+
+## Tray app
+
+You can just download and run the exe in [releases](https://github.com/AnaCoda/BeeWiSmartLiteWinCTRL/releases)
+
+A system-tray control panel (run `beewi scan` once first to save your bulbs):
+
+```powershell
+uv run beewi-tray
+```
+
+Click the tray icon to expand a panel with per-light on/off, a live color
+picker, brightness and warmth sliders, a toggle to control all lights together,
+and saveable presets. It keeps a Bluetooth connection open to each bulb so
+sliders respond in real time.
 
 ## Setup
 
@@ -37,19 +55,6 @@ Choose which bulbs to save explicitly with
 `uv run beewi use AA:BB:CC:DD:EE:FF 11:22:33:44:55:66`.
 
 Nothing found? Try `uv run beewi scan --all` to list every BLE device.
-
-## Tray app
-
-A system-tray control panel (run `beewi scan` once first to save your bulbs):
-
-```powershell
-uv run beewi-tray
-```
-
-Click the tray icon to expand a panel with per-light on/off, a live color
-picker, brightness and warmth sliders, a toggle to control all lights together,
-and saveable presets. It keeps a Bluetooth connection open to each bulb so
-sliders respond in real time.
 
 ## Credits
 
